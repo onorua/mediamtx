@@ -1,16 +1,15 @@
-// Package srt contains a SRT server.
 package srt
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"sync"
-	"time"
 
-	srt "github.com/datarhei/gosrt"
 	"github.com/google/uuid"
+	srtgo "github.com/haivision/srtgo"
 
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/defs"
@@ -22,48 +21,12 @@ import (
 // ErrConnNotFound is returned when a connection is not found.
 var ErrConnNotFound = errors.New("connection not found")
 
+// srtMaxPayloadSize is same as before
 func srtMaxPayloadSize(u int) int {
 	return ((u - 16) / 188) * 188 // 16 = SRT header, 188 = MPEG-TS packet
 }
 
-type serverAPIConnsListRes struct {
-	data *defs.APISRTConnList
-	err  error
-}
-
-type serverAPIConnsListReq struct {
-	res chan serverAPIConnsListRes
-}
-
-type serverAPIConnsGetRes struct {
-	data *defs.APISRTConn
-	err  error
-}
-
-type serverAPIConnsGetReq struct {
-	uuid uuid.UUID
-	res  chan serverAPIConnsGetRes
-}
-
-type serverAPIConnsKickRes struct {
-	err error
-}
-
-type serverAPIConnsKickReq struct {
-	uuid uuid.UUID
-	res  chan serverAPIConnsKickRes
-}
-
-type serverPathManager interface {
-	AddPublisher(req defs.PathAddPublisherReq) (defs.Path, error)
-	AddReader(req defs.PathAddReaderReq) (defs.Path, *stream.Stream, error)
-}
-
-type serverParent interface {
-	logger.Writer
-}
-
-// Server is a SRT server.
+// Server is an SRT server that accepts multiple connections concurrently.
 type Server struct {
 	Address             string
 	RTSPAddress         string
@@ -75,72 +38,113 @@ type Server struct {
 	RunOnDisconnect     string
 	ExternalCmdPool     *externalcmd.Pool
 	PathManager         serverPathManager
-	Parent              serverParent
+	Parent              serverParent // logger + parent interface
 
 	ctx       context.Context
 	ctxCancel func()
 	wg        sync.WaitGroup
-	ln        srt.Listener
-	conns     map[*conn]struct{}
 
-	// in
-	chNewConnRequest chan srt.ConnRequest
-	chAcceptErr      chan error
-	chCloseConn      chan *conn
-	chAPIConnsList   chan serverAPIConnsListReq
-	chAPIConnsGet    chan serverAPIConnsGetReq
-	chAPIConnsKick   chan serverAPIConnsKickReq
+	// The new "native" SRT listener
+	ln *listener
+
+	// concurrency
+	conns map[*conn]struct{}
+
+	// channels used by run() loop
+	chAcceptErr    chan error
+	chCloseConn    chan *conn
+	chAPIConnsList chan serverAPIConnsListReq
+	chAPIConnsGet  chan serverAPIConnsGetReq
+	chAPIConnsKick chan serverAPIConnsKickReq
 }
 
-// Initialize initializes the server.
+// serverPathManager is used by the conn logic (unchanged).
+type serverPathManager interface {
+	AddPublisher(req defs.PathAddPublisherReq) (defs.Path, error)
+	AddReader(req defs.PathAddReaderReq) (defs.Path, *stream.Stream, error)
+}
+
+// serverParent is a minimal interface for logging (unchanged).
+type serverParent interface {
+	logger.Writer
+}
+
+// serverAPIConnsListReq, serverAPIConnsGetReq, serverAPIConnsKickReq are unchanged:
+type serverAPIConnsListRes struct {
+	data *defs.APISRTConnList
+	err  error
+}
+type serverAPIConnsListReq struct {
+	res chan serverAPIConnsListRes
+}
+
+type serverAPIConnsGetRes struct {
+	data *defs.APISRTConn
+	err  error
+}
+type serverAPIConnsGetReq struct {
+	uuid uuid.UUID
+	res  chan serverAPIConnsGetRes
+}
+
+type serverAPIConnsKickRes struct {
+	err error
+}
+type serverAPIConnsKickReq struct {
+	uuid uuid.UUID
+	res  chan serverAPIConnsKickRes
+}
+
+// Initialize sets up the SRT listener and concurrency channels.
 func (s *Server) Initialize() error {
-	conf := srt.DefaultConfig()
-	conf.ConnectionTimeout = time.Duration(s.ReadTimeout)
-	conf.PayloadSize = uint32(srtMaxPayloadSize(s.UDPMaxPayloadSize))
-
-	var err error
-	s.ln, err = srt.Listen("srt", s.Address, conf)
-	if err != nil {
-		return err
-	}
-
 	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
-
 	s.conns = make(map[*conn]struct{})
-	s.chNewConnRequest = make(chan srt.ConnRequest)
+
+	// create channels
 	s.chAcceptErr = make(chan error)
 	s.chCloseConn = make(chan *conn)
 	s.chAPIConnsList = make(chan serverAPIConnsListReq)
 	s.chAPIConnsGet = make(chan serverAPIConnsGetReq)
 	s.chAPIConnsKick = make(chan serverAPIConnsKickReq)
 
-	s.Log(logger.Info, "listener opened on "+s.Address+" (UDP)")
-
-	l := &listener{
-		ln:     s.ln,
-		wg:     &s.wg,
-		parent: s,
+	// parse host/port from s.Address
+	host, portStr, err := net.SplitHostPort(s.Address)
+	if err != nil {
+		return fmt.Errorf("invalid address '%s': %w", s.Address, err)
 	}
-	l.initialize()
+	// minimal port parse
+	p, err := net.LookupPort("udp", portStr)
+	if err != nil {
+		return fmt.Errorf("invalid port in address '%s': %w", s.Address, err)
+	}
 
+	// build srtgo options
+	options := map[string]string{
+		"transtype": "live", // or "file"
+		// If you want to set other SRT options, do so here
+	}
+	// create our new srt listener
+	ln, err := newListener(host, uint16(p), options)
+	if err != nil {
+		return err
+	}
+	s.ln = ln
+	s.ln.parent = s // link back for concurrency
+	s.ln.wg = &s.wg
+
+	// start the listener goroutine
+	s.ln.initialize()
+
+	s.Log(logger.Info, "listener opened on %s (SRT)", s.Address)
+
+	// spawn the main server loop
 	s.wg.Add(1)
 	go s.run()
 
 	return nil
 }
 
-// Log implements logger.Writer.
-func (s *Server) Log(level logger.Level, format string, args ...interface{}) {
-	s.Parent.Log(level, "[SRT] "+format, args...)
-}
-
-// Close closes the server.
-func (s *Server) Close() {
-	s.Log(logger.Info, "listener is closing")
-	s.ctxCancel()
-	s.wg.Wait()
-}
-
+// run is the main event loop for the server.
 func (s *Server) run() {
 	defer s.wg.Done()
 
@@ -151,41 +155,18 @@ outer:
 			s.Log(logger.Error, "%s", err)
 			break outer
 
-		case req := <-s.chNewConnRequest:
-			c := &conn{
-				parentCtx:           s.ctx,
-				rtspAddress:         s.RTSPAddress,
-				readTimeout:         s.ReadTimeout,
-				writeTimeout:        s.WriteTimeout,
-				udpMaxPayloadSize:   s.UDPMaxPayloadSize,
-				connReq:             req,
-				runOnConnect:        s.RunOnConnect,
-				runOnConnectRestart: s.RunOnConnectRestart,
-				runOnDisconnect:     s.RunOnDisconnect,
-				wg:                  &s.wg,
-				externalCmdPool:     s.ExternalCmdPool,
-				pathManager:         s.PathManager,
-				parent:              s,
-			}
-			c.initialize()
-			s.conns[c] = struct{}{}
-
 		case c := <-s.chCloseConn:
+			// a conn has closed
 			delete(s.conns, c)
 
 		case req := <-s.chAPIConnsList:
-			data := &defs.APISRTConnList{
-				Items: []*defs.APISRTConn{},
-			}
-
+			data := &defs.APISRTConnList{Items: []*defs.APISRTConn{}}
 			for c := range s.conns {
 				data.Items = append(data.Items, c.apiItem())
 			}
-
 			sort.Slice(data.Items, func(i, j int) bool {
 				return data.Items[i].Created.Before(data.Items[j].Created)
 			})
-
 			req.res <- serverAPIConnsListRes{data: data}
 
 		case req := <-s.chAPIConnsGet:
@@ -194,7 +175,6 @@ outer:
 				req.res <- serverAPIConnsGetRes{err: ErrConnNotFound}
 				continue
 			}
-
 			req.res <- serverAPIConnsGetRes{data: c.apiItem()}
 
 		case req := <-s.chAPIConnsKick:
@@ -203,7 +183,6 @@ outer:
 				req.res <- serverAPIConnsKickRes{err: ErrConnNotFound}
 				continue
 			}
-
 			delete(s.conns, c)
 			c.Close()
 			req.res <- serverAPIConnsKickRes{}
@@ -214,29 +193,33 @@ outer:
 	}
 
 	s.ctxCancel()
-
 	s.ln.Close()
 }
 
-func (s *Server) findConnByUUID(uuid uuid.UUID) *conn {
-	for sx := range s.conns {
-		if sx.uuid == uuid {
-			return sx
-		}
+// newConn is called by the listener when a new SRT connection is accepted
+func (s *Server) newConn(sock *srtgo.SrtSocket, remote net.Addr) {
+	// create a new conn struct (see "conn.go")
+	c := &conn{
+		parentCtx:           s.ctx,
+		rtspAddress:         s.RTSPAddress,
+		readTimeout:         s.ReadTimeout,
+		writeTimeout:        s.WriteTimeout,
+		udpMaxPayloadSize:   s.UDPMaxPayloadSize,
+		runOnConnect:        s.RunOnConnect,
+		runOnConnectRestart: s.RunOnConnectRestart,
+		runOnDisconnect:     s.RunOnDisconnect,
+		wg:                  &s.wg,
+		externalCmdPool:     s.ExternalCmdPool,
+		pathManager:         s.PathManager,
+		parent:              s,
+		sconn:               sock,
+		remoteAddr:          remote,
 	}
-	return nil
+	c.initialize()
+	s.conns[c] = struct{}{}
 }
 
-// newConnRequest is called by srtListener.
-func (s *Server) newConnRequest(connReq srt.ConnRequest) {
-	select {
-	case s.chNewConnRequest <- connReq:
-	case <-s.ctx.Done():
-		connReq.Reject(srt.REJ_CLOSE)
-	}
-}
-
-// acceptError is called by srtListener.
+// acceptError is called by the listener if Accept() fails
 func (s *Server) acceptError(err error) {
 	select {
 	case s.chAcceptErr <- err:
@@ -244,60 +227,67 @@ func (s *Server) acceptError(err error) {
 	}
 }
 
-// closeConn is called by conn.
+// findConnByUUID returns a conn matching the provided UUID
+func (s *Server) findConnByUUID(u uuid.UUID) *conn {
+	for cx := range s.conns {
+		if cx.uuid == u {
+			return cx
+		}
+	}
+	return nil
+}
+
 func (s *Server) closeConn(c *conn) {
+	// if you track connections, remove c from the map, or send it over a channel
 	select {
 	case s.chCloseConn <- c:
 	case <-s.ctx.Done():
 	}
 }
 
-// APIConnsList is called by api.
-func (s *Server) APIConnsList() (*defs.APISRTConnList, error) {
-	req := serverAPIConnsListReq{
-		res: make(chan serverAPIConnsListRes),
-	}
+// Close stops everything
+func (s *Server) Close() {
+	s.Log(logger.Info, "listener is closing")
+	s.ctxCancel()
+	s.wg.Wait()
+}
 
+// APIConnsList, APIConnsGet, APIConnsKick are unchanged
+
+func (s *Server) APIConnsList() (*defs.APISRTConnList, error) {
+	req := serverAPIConnsListReq{res: make(chan serverAPIConnsListRes)}
 	select {
 	case s.chAPIConnsList <- req:
 		res := <-req.res
 		return res.data, res.err
-
 	case <-s.ctx.Done():
 		return nil, fmt.Errorf("terminated")
 	}
 }
 
-// APIConnsGet is called by api.
-func (s *Server) APIConnsGet(uuid uuid.UUID) (*defs.APISRTConn, error) {
-	req := serverAPIConnsGetReq{
-		uuid: uuid,
-		res:  make(chan serverAPIConnsGetRes),
-	}
-
+func (s *Server) APIConnsGet(u uuid.UUID) (*defs.APISRTConn, error) {
+	req := serverAPIConnsGetReq{uuid: u, res: make(chan serverAPIConnsGetRes)}
 	select {
 	case s.chAPIConnsGet <- req:
 		res := <-req.res
 		return res.data, res.err
-
 	case <-s.ctx.Done():
 		return nil, fmt.Errorf("terminated")
 	}
 }
 
-// APIConnsKick is called by api.
-func (s *Server) APIConnsKick(uuid uuid.UUID) error {
-	req := serverAPIConnsKickReq{
-		uuid: uuid,
-		res:  make(chan serverAPIConnsKickRes),
-	}
-
+func (s *Server) APIConnsKick(u uuid.UUID) error {
+	req := serverAPIConnsKickReq{uuid: u, res: make(chan serverAPIConnsKickRes)}
 	select {
 	case s.chAPIConnsKick <- req:
 		res := <-req.res
 		return res.err
-
 	case <-s.ctx.Done():
 		return fmt.Errorf("terminated")
 	}
+}
+
+// Log delegates to the parent's logger
+func (s *Server) Log(level logger.Level, format string, args ...interface{}) {
+	s.Parent.Log(level, "[SRT] "+format, args...)
 }
