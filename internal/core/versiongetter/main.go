@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -76,7 +77,11 @@ func tagFromGit() error {
 	// where .git/objects/info/alternates points to a directory outside of the .git directory.
 	//
 	// To work around this, specify an AlternatesFS that allows access to the entire filesystem.
-	storerFs := osfs.New("../../.git", osfs.WithBoundOS())
+	gitDir, err := filepath.Abs("../../.git")
+	if err != nil {
+		return fmt.Errorf("failed to resolve .git directory: %w", err)
+	}
+	storerFs := osfs.New(gitDir, osfs.WithBoundOS())
 	storer := filesystem.NewStorageWithOptions(storerFs, cache.NewObjectLRUDefault(), filesystem.Options{
 		AlternatesFS: osfs.New("/", osfs.WithBoundOS()),
 	})
@@ -119,7 +124,7 @@ func do() error {
 
 	err := tagFromGit()
 	if err != nil {
-		log.Println("WARN: cannot get tag from .git folder, using v0.0.0 as version")
+		log.Println("WARN: cannot get tag from .git folder (%w), using v0.0.0 as version", err)
 		err = os.WriteFile("VERSION", []byte("v0.0.0"), 0o644)
 		if err != nil {
 			return fmt.Errorf("failed to write version file: %w", err)

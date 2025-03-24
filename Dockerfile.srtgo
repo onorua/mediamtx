@@ -1,0 +1,40 @@
+FROM ubuntu:22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN dpkg --add-architecture arm64
+
+RUN echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy main universe multiverse restricted" > /etc/apt/sources.list && \
+    echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-updates main universe multiverse restricted" >> /etc/apt/sources.list && \
+    echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-backports main universe multiverse restricted" >> /etc/apt/sources.list && \
+    echo "deb [arch=amd64] http://security.ubuntu.com/ubuntu jammy-security main universe multiverse restricted" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main universe multiverse restricted" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main universe multiverse restricted" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main universe multiverse restricted" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main universe multiverse restricted" >> /etc/apt/sources.list
+
+RUN apt-get update && \
+    apt-get install -y \
+        gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+        libc6-dev:arm64 \
+        libssl-dev:arm64 \
+        libssl-dev:amd64 \
+        pkg-config \
+        cmake \
+        ninja-build \
+        make \
+        build-essential \
+        git \
+        autoconf \
+        libtool \
+        curl
+
+ARG GO_VERSION=1.24.1
+ENV GO_VERSION=${GO_VERSION}
+RUN curl -LO https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz && \
+    rm -rf /usr/local/go && \
+    tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz && \
+    rm go${GO_VERSION}.linux-amd64.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+CMD ["/bin/bash"]
