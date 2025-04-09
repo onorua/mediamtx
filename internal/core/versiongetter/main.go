@@ -77,15 +77,19 @@ func tagFromGit() error {
 	// where .git/objects/info/alternates points to a directory outside of the .git directory.
 	//
 	// To work around this, specify an AlternatesFS that allows access to the entire filesystem.
-	gitDir, err := filepath.Abs("../../.git")
+	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
-		return fmt.Errorf("failed to resolve .git directory: %w", err)
+		return fmt.Errorf("failed to resolve repository root: %w", err)
 	}
+
+	gitDir := filepath.Join(repoRoot, ".git")
+
 	storerFs := osfs.New(gitDir, osfs.WithBoundOS())
 	storer := filesystem.NewStorageWithOptions(storerFs, cache.NewObjectLRUDefault(), filesystem.Options{
 		AlternatesFS: osfs.New("/", osfs.WithBoundOS()),
 	})
-	worktreeFs := osfs.New("../..", osfs.WithBoundOS())
+
+	worktreeFs := osfs.New(repoRoot, osfs.WithBoundOS())
 	repo, err := git.Open(storer, worktreeFs)
 	if err != nil {
 		return fmt.Errorf("failed to open repository: %w", err)
