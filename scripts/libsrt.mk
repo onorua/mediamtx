@@ -1,61 +1,69 @@
-TMP_DIR ?= $(shell pwd)/tmp
+include scripts/common.mk
 
+LIBSRT_VERSION ?= 1.5.4
 LIBSRT_DIR = $(TMP_DIR)/libsrt
 LIBSRT_SRC_DIR = $(LIBSRT_DIR)/$(LIBSRT_VERSION)
-LIBSRT_ARTIFACTS_DIR = $(LIBSRT_DIR)/artifacts
-LIBSRT_TAR = $(LIBSRT_DIR)/libsrt.tar.gz
-LIBSRT_VERSION ?= 1.5.4
+LIBSRT_TAR = $(LIBSRT_DIR)/v$(LIBSRT_VERSION).tar.gz
 LIBSRT_URL = https://github.com/Haivision/srt/archive/refs/tags/v$(LIBSRT_VERSION).tar.gz
-LIBSRT_CMAKE_CONF_OPTS += "	\
+
+LIBSRT_CMAKE_CONF_OPTS += \
 	-DENABLE_STDCXX_SYNC=ON \
 	-DENABLE_ENCRYPTION=ON \
 	-DENABLE_BONDING=ON \
 	-DENABLE_SHOW_PROJECT_CONFIG=ON \
-	"
+	-DENABLE_SHARED=OFF \
+	-DENABLE_STATIC=ON
 
-# $(call build_libsrt,CC_PREFIX,CMAKE_ADDITIONAL_OPTS,BUILD_DIR,INSTALL_DIR)
 define build_libsrt
-	cmake \
+	$(eval ARCH = $(1))
+	$(eval CC_PREFIX = $(2))
+	$(eval INSTALL_DIR = $(3))
+	
+	$(eval BUILD_DIR = $(LIBSRT_SRC_DIR)/build-$(ARCH))
+
+	rm -rf $(LIBSRT_SRC_DIR)
+	mkdir -p $(LIBSRT_SRC_DIR)
+	tar -xzf $(LIBSRT_TAR) -C $(LIBSRT_SRC_DIR) --strip-components=1
+
+	mkdir -p $(BUILD_DIR)
+
+	@echo "=========================="
+	@echo "Building libsrt $(LIBSRT_VERSION) for $(ARCH)"
+	@echo "=========================="
+	@echo "CC_PREFIX: $(CC_PREFIX)"
+	@echo "INSTALL_DIR: $(INSTALL_DIR)"
+	@echo "BUILD_DIR: $(BUILD_DIR)"
+	@echo "CFLAGS: $(CFLAGS)"
+	@echo "CXXFLAGS: $(CXXFLAGS)"
+	@echo "LDFLAGS: $(LDFLAGS)"
+	@echo "LIBSRT_CMAKE_CONF_OPTS: $(LIBSRT_CMAKE_CONF_OPTS)"
+	@echo "=========================="
+
+	(cmake \
+		-DCMAKE_C_COMPILER=$(CC_PREFIX)gcc \
+		-DCMAKE_CXX_COMPILER=$(CC_PREFIX)g++ \
+		-DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
+		-DCMAKE_SYSTEM_PROCESSOR=$(ARCH) \
+		-DCMAKE_INSTALL_DO_STRIP=ON \
+		$(if $(CFLAGS),-DCMAKE_C_FLAGS="$(CFLAGS)") \
+		$(if $(CXXFLAGS),-DCMAKE_CXX_FLAGS="$(CXXFLAGS)") \
+		$(if $(LDFLAGS),-DCMAKE_EXE_LINKER_FLAGS="$(LDFLAGS)") \
+		$(if $(LDFLAGS),-DCMAKE_SHARED_LINKER_FLAGS="$(LDFLAGS)") \
 		$(LIBSRT_CMAKE_CONF_OPTS) \
-		-DCMAKE_C_COMPILER=$(1)gcc \
-		-DCMAKE_CXX_COMPILER=$(1)g++ \
-		-DCMAKE_INSTALL_PREFIX=$(4) \
-		$(2) \
-		-B $(3) \
-		-S $(LIBSRT_SRC_DIR)
-	cmake --build $(3) --target install -- -j`nproc`
+		-B $(BUILD_DIR) \
+		-S $(LIBSRT_SRC_DIR); \
+	cmake --build $(BUILD_DIR) --target install -- -j$(PARALLEL_JOBS))
 endef
 
-.PHONY: libsrc_src libsrt_linux_amd64 libsrt_linux_arm64 libsrt_linux_armv6 libsrt_linux_armv7 libsrt_linux
+.PHONY: libsrt_download libsrt_build libsrt_clean
 
-$(LIBSRT_SRC_DIR):
-	mkdir -p $(TMP_DIR) $(LIBSRT_DIR) $(LIBSRT_SRC_DIR)
+libsrt_download: $(LIBSRT_TAR)
+$(LIBSRT_TAR):
+	mkdir -p $(TMP_DIR) $(LIBSRT_DIR)
 	curl -L -o $(LIBSRT_TAR) $(LIBSRT_URL)
-	tar -xzf $(LIBSRT_TAR) -C $(LIBSRT_SRC_DIR) --strip-components=1
-	rm $(LIBSRT_TAR)
 
-libsrc_src: $(LIBSRT_SRC_DIR)
+libsrt_clean:
+	rm -rf $(LIBSRT_DIR)
 
-libsrt_linux_amd64: libsrc_src
-	$(eval BUILD_DIR = $(LIBSRT_DIR)/build-amd64)
-	$(call build_libsrt,,,$(BUILD_DIR),$(LIBSRT_ARTIFACTS_DIR)/linux-amd64)
-
-libsrt_linux_arm64: libsrc_src
-	$(eval BUILD_DIR = $(LIBSRT_DIR)/build-arm64)
-	$(eval CC_PREFIX = aarch64-linux-gnu-)
-	$(eval CMAKE_ADDITIONAL_OPTS = -DCMAKE_SYSTEM_PROCESSOR=aarch64)
-	$(call build_libsrt,$(CC_PREFIX),$(CMAKE_ADDITIONAL_OPTS),$(BUILD_DIR),$(LIBSRT_ARTIFACTS_DIR)/linux-arm64)
-
-# libsrt_linux_armv6: libsrc_src
-# 	$(eval BUILD_DIR = $(LIBSRT_DIR)/build_armv6)
-# 	$(eval CC_PREFIX = aarch64-linux-gnu-)
-# 	$(eval CMAKE_ADDITIONAL_OPTS = -DCMAKE_SYSTEM_PROCESSOR=armv6)
-# 	$(call build_libsrt,$(CC_PREFIX),$(CMAKE_ADDITIONAL_OPTS),$(BUILD_DIR),$(LIBSRT_DIR)/artifacts/armv6)
-
-# libsrt_linux_armv7: libsrc_src
-# 	$(eval BUILD_DIR = $(LIBSRT_DIR)/build_armv7)
-# 	$(eval CC_PREFIX = aarch64-linux-gnu-)
-# 	$(eval CMAKE_ADDITIONAL_OPTS = -DCMAKE_SYSTEM_PROCESSOR=armv7)
-# 	$(call build_libsrt,$(CC_PREFIX),$(CMAKE_ADDITIONAL_OPTS),$(BUILD_DIR),$(LIBSRT_DIR)/artifacts/armv7)
-
-libsrt_linux: libsrt_linux_amd64 libsrt_linux_arm64
+libsrt_build: libsrt_download openssl_build
+	$(call build_libsrt,$(ARCH),$(CC_PREFIX),$(INSTALL_DIR))

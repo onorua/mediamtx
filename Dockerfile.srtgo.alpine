@@ -1,0 +1,26 @@
+FROM golang:1.23-alpine3.20
+
+RUN apk add --no-cache \
+    build-base \
+    musl-dev \
+    git \
+    tar \
+    zip \
+    bash \
+    linux-headers \
+    openssl-dev
+
+# musl-cross-make dependencies
+RUN apk add --no-cache \
+    g++ \
+    make \
+    cmake \
+    musl-dev \
+    linux-headers \
+    curl \
+    bash \
+    xz
+
+# Install openssl dependencies
+RUN apk add --no-cache \
+    perl

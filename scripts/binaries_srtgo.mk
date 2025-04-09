@@ -1,7 +1,5 @@
 BINARY_NAME = mediamtx
 
-include scripts/libsrt.mk
-
 TMP_DIR = $(shell pwd)/tmp
 MEDIAMTX_DIR = ${TMP_DIR}/mediamtx
 MEDIAMTX_SRC_DIR = $(shell pwd)
