@@ -48,6 +48,7 @@ type Server struct {
 	ln *listener
 
 	// concurrency
+	mutex sync.Mutex // Add this mutex to protect the map
 	conns map[*conn]struct{}
 
 	// channels used by run() loop
@@ -157,7 +158,9 @@ outer:
 
 		case c := <-s.chCloseConn:
 			// a conn has closed
+			s.mutex.Lock()
 			delete(s.conns, c)
+			s.mutex.Unlock()
 
 		case req := <-s.chAPIConnsList:
 			data := &defs.APISRTConnList{Items: []*defs.APISRTConn{}}
@@ -183,7 +186,9 @@ outer:
 				req.res <- serverAPIConnsKickRes{err: ErrConnNotFound}
 				continue
 			}
+			s.mutex.Lock()
 			delete(s.conns, c)
+			s.mutex.Unlock()
 			c.Close()
 			req.res <- serverAPIConnsKickRes{}
 
@@ -216,7 +221,9 @@ func (s *Server) newConn(sock *srtgo.SrtSocket, remote net.Addr) {
 		remoteAddr:          remote,
 	}
 	c.initialize()
+	s.mutex.Lock()
 	s.conns[c] = struct{}{}
+	s.mutex.Unlock()
 }
 
 // acceptError is called by the listener if Accept() fails
