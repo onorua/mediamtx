@@ -27,7 +27,8 @@ RUN apt-get update && \
         git \
         autoconf \
         libtool \
-        curl
+        curl \
+        wget
 
 ARG GO_VERSION=1.24.1
 ENV GO_VERSION=${GO_VERSION}

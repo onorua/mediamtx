@@ -5,6 +5,7 @@ LIBSRT_DIR = $(TMP_DIR)/libsrt
 LIBSRT_SRC_DIR = $(LIBSRT_DIR)/$(LIBSRT_VERSION)
 LIBSRT_TAR = $(LIBSRT_DIR)/v$(LIBSRT_VERSION).tar.gz
 LIBSRT_URL = https://github.com/Haivision/srt/archive/refs/tags/v$(LIBSRT_VERSION).tar.gz
+LIBSRT_STAMP = $(STAMP_DIR)/libsrt-$(LIBSRT_VERSION)-$(TARGET).stamp
 
 LIBSRT_CMAKE_CONF_OPTS += \
 	-DENABLE_STDCXX_SYNC=ON \
@@ -12,14 +13,16 @@ LIBSRT_CMAKE_CONF_OPTS += \
 	-DENABLE_BONDING=ON \
 	-DENABLE_SHOW_PROJECT_CONFIG=ON \
 	-DENABLE_SHARED=OFF \
-	-DENABLE_STATIC=ON
+	-DENABLE_STATIC=ON \
+	-DENABLE_LOGGING=ON \
+	-DENABLE_HEAVY_LOGGING=ON
 
-define build_libsrt
-	$(eval ARCH = $(1))
+define build_libsrt_def
+	$(eval TARGET = $(1))
 	$(eval CC_PREFIX = $(2))
 	$(eval INSTALL_DIR = $(3))
 	
-	$(eval BUILD_DIR = $(LIBSRT_SRC_DIR)/build-$(ARCH))
+	$(eval BUILD_DIR = $(LIBSRT_SRC_DIR)/build-$(TARGET))
 
 	rm -rf $(LIBSRT_SRC_DIR)
 	mkdir -p $(LIBSRT_SRC_DIR)
@@ -28,8 +31,9 @@ define build_libsrt
 	mkdir -p $(BUILD_DIR)
 
 	@echo "=========================="
-	@echo "Building libsrt $(LIBSRT_VERSION) for $(ARCH)"
+	@echo "Building libsrt $(LIBSRT_VERSION) for $(TARGET)"
 	@echo "=========================="
+	@echo "TARGET: $(TARGET)"
 	@echo "CC_PREFIX: $(CC_PREFIX)"
 	@echo "INSTALL_DIR: $(INSTALL_DIR)"
 	@echo "BUILD_DIR: $(BUILD_DIR)"
@@ -43,7 +47,7 @@ define build_libsrt
 		-DCMAKE_C_COMPILER=$(CC_PREFIX)gcc \
 		-DCMAKE_CXX_COMPILER=$(CC_PREFIX)g++ \
 		-DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
-		-DCMAKE_SYSTEM_PROCESSOR=$(ARCH) \
+		-DCMAKE_SYSTEM_PROCESSOR=$(TARGET) \
 		-DCMAKE_INSTALL_DO_STRIP=ON \
 		$(if $(CFLAGS),-DCMAKE_C_FLAGS="$(CFLAGS)") \
 		$(if $(CXXFLAGS),-DCMAKE_CXX_FLAGS="$(CXXFLAGS)") \
@@ -55,15 +59,17 @@ define build_libsrt
 	cmake --build $(BUILD_DIR) --target install -- -j$(PARALLEL_JOBS))
 endef
 
-.PHONY: libsrt_download libsrt_build libsrt_clean
-
-libsrt_download: $(LIBSRT_TAR)
 $(LIBSRT_TAR):
 	mkdir -p $(TMP_DIR) $(LIBSRT_DIR)
 	curl -L -o $(LIBSRT_TAR) $(LIBSRT_URL)
 
 libsrt_clean:
 	rm -rf $(LIBSRT_DIR)
+	rm -f $(STAMP_DIR)/libsrt-*
+.PHONY: libsrt_clean
 
-libsrt_build: libsrt_download openssl_build
-	$(call build_libsrt,$(ARCH),$(CC_PREFIX),$(INSTALL_DIR))
+libsrt_build: $(LIBSRT_TAR) $(LIBSRT_STAMP)
+$(LIBSRT_STAMP):
+	$(call build_libsrt_def,$(TARGET),$(CC_PREFIX),$(INSTALL_DIR))
+	@touch $@
+.PHONY: libsrt_build

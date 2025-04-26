@@ -1,43 +1,63 @@
+include scripts/common.mk
+
 BINARY_NAME = mediamtx
+VERSION = $(shell cat internal/core/VERSION)
 
-TMP_DIR = $(shell pwd)/tmp
-MEDIAMTX_DIR = ${TMP_DIR}/mediamtx
-MEDIAMTX_SRC_DIR = $(shell pwd)
-MEDIAMTX_ARTIFACTS_DIR = ${MEDIAMTX_DIR}/artifacts
+OUT_DIR = $(SRC_DIR)/binaries
+SYSROOTS = $(TMP_DIR)/sysroots
 
-define build_binary_linux
-	$(eval GOOS = linux)
-	$(eval GOARCH = $(1))
-	$(eval CC_PREFIX = $(2))
+define BUILD_MEDIAMTX
+	$(call SET_ENV,$(3))
+
+	$(eval GOOS = $(1))
+	$(eval GOARCH = $(2))
+	$(eval GOARCH_OUT_DIR = $(OUT_DIR)/$(GOOS)-$(GOARCH))
+
+	mkdir -p $(GOARCH_OUT_DIR)
 
 	GOOS=$(GOOS) \
 	GOARCH=$(GOARCH) \
-	CGO_ENABLED=1 \
 	CC=$(CC_PREFIX)gcc \
-	CGO_CFLAGS="-I$(LIBSRT_ARTIFACTS_DIR)/linux-$(GOARCH)/include" \
-	CGO_LDFLAGS="-L$(LIBSRT_ARTIFACTS_DIR)/linux-$(GOARCH)/lib/ $(LIBSRT_ARTIFACTS_DIR)/linux-$(GOARCH)/lib/libsrt.a -lcrypto -lssl -lstdc++ -lm" \
-	go build -o $(MEDIAMTX_ARTIFACTS_DIR)/linux-$(GOARCH)/$(BINARY_NAME)
+	CGO_ENABLED=1 \
+	CGO_CFLAGS=$(CFLAGS) \
+	CGO_LDFLAGS="$(LDFLAGS) $(SYSROOT)/lib/libsrt.a -lcrypto -lssl -lstdc++ -lm" \
+	go build -o $(GOARCH_OUT_DIR)/$(BINARY_NAME)
+
+	$(CC_PREFIX)strip --strip-unneeded $(GOARCH_OUT_DIR)/$(BINARY_NAME)
+
+	cp mediamtx.yml LICENSE $(GOARCH_OUT_DIR)/
+	tar -C $(GOARCH_OUT_DIR) -czf $(OUT_DIR)/$(BINARY_NAME)_$(VERSION)_$(GOOS)_$(GOARCH).tar.gz \
+		--owner=0 --group=0 $(BINARY_NAME) mediamtx.yml LICENSE
 endef
 
-define package_binary
-	mkdir -p $(MEDIAMTX_SRC_DIR)/binaries
-	cp $(MEDIAMTX_SRC_DIR)/mediamtx.yml $(MEDIAMTX_ARTIFACTS_DIR)/linux-$(1)
-	cp $(MEDIAMTX_SRC_DIR)/LICENSE $(MEDIAMTX_ARTIFACTS_DIR)/linux-$(1)
-	tar -C $(MEDIAMTX_ARTIFACTS_DIR)/linux-$(1) -cz \
-		-f "$(MEDIAMTX_SRC_DIR)/binaries/$(BINARY_NAME)_$(shell cat $(MEDIAMTX_SRC_DIR)/internal/core/VERSION)_linux_$(1).tar.gz" \
-		--owner=0 --group=0 \
-		$(BINARY_NAME) mediamtx.yml LICENSE
-endef
+MEDIAMTX_PREPARE_STAMP = $(STAMP_DIR)/mediamtx_prepare.stamp
 
-.PHONY: go_generate binary_linux_amd64 binary_linux_arm64
+mediamtx_prepare: $(MEDIAMTX_PREPARE_STAMP)
+$(MEDIAMTX_PREPARE_STAMP):
+	echo "Preparing mediamtx"
+	mkdir -p $(OUT_DIR)
+	mkdir -p $(SYSROOTS)/aarch64
+	mkdir -p $(SYSROOTS)/x86_64
+	mkdir -p $(STAMP_DIR)
+	touch $@
+.PHONY: mediamtx_prepare
 
-go_generate:
-	go generate ./...
+mediamtx_linux_amd64: mediamtx_prepare $(OUT_DIR)/linux-amd64/$(BINARY_NAME)
+$(OUT_DIR)/linux-amd64/$(BINARY_NAME):
+	$(call BUILD_LIBSRT,x86_64)
+	$(call BUILD_MEDIAMTX,linux,amd64,x86_64)
+.PHONY: mediamtx_linux_amd64
 
-binary_linux_amd64: libsrt_linux_amd64
-	$(call build_binary_linux,amd64,)
-	$(call package_binary,amd64)
+mediamtx_linux_arm64: mediamtx_prepare $(OUT_DIR)/linux-arm64/$(BINARY_NAME)
+$(OUT_DIR)/linux-arm64/$(BINARY_NAME):
+	$(eval CC_PREFIX = aarch64-linux-gnu-)
+	$(call BUILD_LIBSRT,aarch64)
+	$(call BUILD_MEDIAMTX,linux,arm64,aarch64)
+.PHONY: mediamtx_linux_arm64
 
-binary_linux_arm64: libsrt_linux_arm64
-	$(call build_binary_linux,arm64,aarch64-linux-gnu-)
-	$(call package_binary,arm64)
+mediamtx_linux_all: mediamtx_linux_amd64 mediamtx_linux_arm64
+.PHONY: mediamtx_linux_all
+
+mediamtx_clean:
+	rm -rf $(OUT_DIR)
+	rm -f $(MEDIAMTX_PREPARE_STAMP)
