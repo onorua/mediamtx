@@ -12,6 +12,10 @@ logLevel: info
 logDestinations: [stdout]
 # If "file" is in logDestinations, this is the file which will receive the logs.
 logFile: mediamtx.log
+# If "yes", SRT statistics are printed to the log.
+logSrtStats: no
+# If logSrtStats is "yes", SRT statistics are printed to the log every logSrtStatsInterval.
+logSrtStatsInterval: 10s
 
 # Timeout of read operations.
 readTimeout: 10s

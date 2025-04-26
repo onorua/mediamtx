@@ -7,6 +7,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	srtgo "github.com/haivision/srtgo"
@@ -68,6 +69,9 @@ type serverPathManager interface {
 // serverParent is a minimal interface for logging (unchanged).
 type serverParent interface {
 	logger.Writer
+	GetLogLevel() logger.Level
+	SrtStatsLoggingEnabled() bool
+	GetSRTStatsInterval() time.Duration
 }
 
 // serverAPIConnsListReq, serverAPIConnsGetReq, serverAPIConnsKickReq are unchanged:
@@ -96,10 +100,50 @@ type serverAPIConnsKickReq struct {
 	res  chan serverAPIConnsKickRes
 }
 
+// logLevelToSRTLevel converts a logger.Level to srtgo.SrtLogLevel
+func logLevelToSRTLevel(level logger.Level) srtgo.SrtLogLevel {
+	switch level {
+	case logger.Error:
+		return srtgo.SrtLogLevelErr
+	case logger.Warn:
+		return srtgo.SrtLogLevelWarning
+	case logger.Info:
+		return srtgo.SrtLogLevelInfo
+	case logger.Debug:
+		return srtgo.SrtLogLevelDebug
+	default:
+		return srtgo.SrtLogLevelInfo
+	}
+}
+
+// srtLevelToLogLevel converts a srtgo.SrtLogLevel to logger.Level
+func srtLevelToLogLevel(level srtgo.SrtLogLevel) logger.Level {
+	switch level {
+	case srtgo.SrtLogLevelCrit, srtgo.SrtLogLevelErr:
+		return logger.Error
+	case srtgo.SrtLogLevelWarning:
+		return logger.Warn
+	case srtgo.SrtLogLevelNotice, srtgo.SrtLogLevelInfo:
+		return logger.Info
+	case srtgo.SrtLogLevelDebug:
+		return logger.Debug
+	default:
+		return logger.Info
+	}
+}
+
 // Initialize sets up the SRT listener and concurrency channels.
 func (s *Server) Initialize() error {
 	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
 	s.conns = make(map[*conn]struct{})
+
+	srtLogLevel := logLevelToSRTLevel(s.Parent.GetLogLevel())
+	srtgo.SrtSetLogLevel(srtLogLevel)
+
+	srtgo.SrtSetLogHandler(func(level srtgo.SrtLogLevel, file string, line int, area, message string) {
+		logLevel := srtLevelToLogLevel(level)
+		s.Log(logLevel, "[SRT-LIB] %s: %s", area, message)
+	})
 
 	// create channels
 	s.chAcceptErr = make(chan error)
@@ -141,6 +185,9 @@ func (s *Server) Initialize() error {
 	// spawn the main server loop
 	s.wg.Add(1)
 	go s.run()
+
+	// start logging SRT stats
+	s.logSRTStats()
 
 	return nil
 }
@@ -297,4 +344,39 @@ func (s *Server) APIConnsKick(u uuid.UUID) error {
 // Log delegates to the parent's logger
 func (s *Server) Log(level logger.Level, format string, args ...interface{}) {
 	s.Parent.Log(level, "[SRT] "+format, args...)
+}
+
+// Add a method to fetch and log SRT stats at configured intervals.
+func (s *Server) logSRTStats() {
+	// Check if SRT stats logging is enabled
+	if !s.Parent.SrtStatsLoggingEnabled() {
+		return
+	}
+
+	interval := s.Parent.GetSRTStatsInterval()
+	if interval <= 0 {
+		interval = 1 * time.Second
+	}
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-time.After(interval):
+				s.mutex.Lock()
+				for conn := range s.conns {
+					stats, err := conn.sconn.Stats()
+					if err != nil {
+						s.Log(logger.Warn, "Error fetching stats: %v", err)
+						continue
+					}
+					s.Log(logger.Info, "[%s] SRT Stats: %+v", conn.uuid, stats)
+				}
+				s.mutex.Unlock()
+			}
+		}
+	}()
 }

@@ -167,6 +167,10 @@ func (p *Core) Log(level logger.Level, format string, args ...interface{}) {
 	p.logger.Log(level, format, args...)
 }
 
+func (p *Core) GetLogLevel() logger.Level {
+	return logger.Level(p.conf.LogLevel)
+}
+
 func (p *Core) run() {
 	defer close(p.done)
 
@@ -1003,4 +1007,17 @@ func (p *Core) APIConfigSet(conf *conf.Conf) {
 	case p.chAPIConfigSet <- conf:
 	case <-p.ctx.Done():
 	}
+}
+
+// SrtStatsLoggingEnabled returns whether SRT stats logging is enabled
+func (p *Core) SrtStatsLoggingEnabled() bool {
+	return p.conf.LogSrtStats
+}
+
+// GetSRTStatsInterval returns the interval for SRT stats logging
+func (p *Core) GetSRTStatsInterval() time.Duration {
+	if time.Duration(p.conf.LogSrtStatsInterval) <= 0 {
+		return 1 * time.Second // Fallback to default if invalid
+	}
+	return time.Duration(p.conf.LogSrtStatsInterval)
 }
