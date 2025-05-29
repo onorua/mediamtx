@@ -5,7 +5,7 @@ go 1.23.0
 require (
 	code.cloudfoundry.org/bytefmt v0.32.0
 	github.com/MicahParks/jwkset v0.8.0
-	github.com/MicahParks/keyfunc/v3 v3.3.10
+	github.com/MicahParks/keyfunc/v3 v3.4.0
 	github.com/abema/go-mp4 v1.4.1
 	github.com/alecthomas/kong v1.9.0
 	github.com/asticode/go-astits v1.13.0
@@ -18,7 +18,7 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-git/go-billy/v5 v5.6.2
 	github.com/go-git/go-git/v5 v5.14.0
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/gookit/color v1.5.4
 	github.com/gorilla/websocket v1.5.3
