@@ -22,6 +22,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gookit/color v1.5.4
 	github.com/gorilla/websocket v1.5.3
+	github.com/haivision/srtgo v0.0.0-20230627061225-a70d53fcd618
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/matthewhartstonge/argon2 v1.3.2
 	github.com/pion/ice/v4 v4.0.7
@@ -65,6 +66,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
@@ -98,3 +100,7 @@ require (
 replace github.com/pion/ice/v4 => github.com/aler9/ice/v4 v4.0.0-20250301104324-b2df7db9f75d
 
 replace github.com/pion/webrtc/v4 => github.com/aler9/webrtc/v4 v4.0.0-20250228091429-18796cd12b4f
+
+replace github.com/bluenviron/mediacommon/v2 => ../mediacommon-klv
+
+replace github.com/bluenviron/gortsplib/v4 => ../gortsplib-klv

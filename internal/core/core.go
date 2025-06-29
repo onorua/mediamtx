@@ -31,6 +31,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/servers/rtmp"
 	"github.com/bluenviron/mediamtx/internal/servers/rtsp"
 	"github.com/bluenviron/mediamtx/internal/servers/srt"
+	"github.com/bluenviron/mediamtx/internal/srtcompat"
 	"github.com/bluenviron/mediamtx/internal/servers/webrtc"
 )
 
@@ -218,7 +219,23 @@ outer:
 
 	p.ctxCancel()
 
-	p.closeResources(nil, false)
+	// Use clean shutdown with a safety timeout
+	// The SRT server uses swarmer's clean shutdown pattern
+	shutdownDone := make(chan struct{})
+	go func() {
+		defer close(shutdownDone)
+		p.closeResources(nil, false)
+	}()
+
+	// Wait for clean shutdown with a reasonable timeout
+	select {
+	case <-shutdownDone:
+		// Clean shutdown completed successfully
+	case <-time.After(5 * time.Second):
+		// Safety timeout - some service is not shutting down cleanly
+		p.Log(logger.Warn, "shutdown timeout reached, forcing exit")
+		os.Exit(1)
+	}
 }
 
 func (p *Core) createResources(initial bool) error {
@@ -238,6 +255,28 @@ func (p *Core) createResources(initial bool) error {
 
 	if initial {
 		p.Log(logger.Info, "MediaMTX %s", version)
+
+		// Initialize SRT library and logging
+		srtcompat.InitSRT()
+
+		// Set up SRT logging with proper integration
+		logLevel := int(p.conf.LogLevel)
+		srtcompat.SetupSRTLogging(logLevel, func(level int, message string) {
+			var loggerLevel logger.Level
+			switch level {
+			case 0: // Error
+				loggerLevel = logger.Error
+			case 1: // Warn
+				loggerLevel = logger.Warn
+			case 2: // Info
+				loggerLevel = logger.Info
+			case 3: // Debug
+				loggerLevel = logger.Debug
+			default:
+				loggerLevel = logger.Info
+			}
+			p.Log(loggerLevel, message)
+		})
 
 		if p.confPath != "" {
 			a, _ := filepath.Abs(p.confPath)
@@ -937,6 +976,8 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 		p.logger.Close()
 		p.logger = nil
 	}
+
+	// SRT library cleanup is not needed - the OS handles it when process exits
 }
 
 func (p *Core) reloadConf(newConf *conf.Conf, calledByAPI bool) error {

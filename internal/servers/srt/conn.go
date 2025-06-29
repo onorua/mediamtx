@@ -11,7 +11,7 @@ import (
 
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	mcmpegts "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
-	srt "github.com/datarhei/gosrt"
+	srt "github.com/bluenviron/mediamtx/internal/srtcompat"
 	"github.com/google/uuid"
 
 	"github.com/bluenviron/mediamtx/internal/auth"
@@ -72,7 +72,7 @@ type conn struct {
 	state     connState
 	pathName  string
 	query     string
-	sconn     srt.Conn
+	sconn     *srt.Conn
 }
 
 func (c *conn) initialize() {
@@ -202,7 +202,7 @@ func (c *conn) runPublish(streamID *streamID) error {
 	}
 }
 
-func (c *conn) runPublishReader(sconn srt.Conn, path defs.Path) error {
+func (c *conn) runPublishReader(sconn *srt.Conn, path defs.Path) error {
 	sconn.SetReadDeadline(time.Now().Add(time.Duration(c.readTimeout)))
 	r := &mcmpegts.Reader{R: mcmpegts.NewBufferedReader(sconn)}
 	err := r.Initialize()

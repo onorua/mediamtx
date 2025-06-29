@@ -3,7 +3,7 @@ package srt
 import (
 	"sync"
 
-	srt "github.com/datarhei/gosrt"
+	srt "github.com/bluenviron/mediamtx/internal/srtcompat"
 )
 
 type listener struct {

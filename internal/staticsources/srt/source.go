@@ -6,7 +6,7 @@ import (
 
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	mcmpegts "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
-	srt "github.com/datarhei/gosrt"
+	srt "github.com/bluenviron/mediamtx/internal/srtcompat"
 
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/counterdumper"
@@ -68,7 +68,7 @@ func (s *Source) Run(params defs.StaticSourceRunParams) error {
 	}
 }
 
-func (s *Source) runReader(sconn srt.Conn) error {
+func (s *Source) runReader(sconn *srt.Conn) error {
 	sconn.SetReadDeadline(time.Now().Add(time.Duration(s.ReadTimeout)))
 	r := &mcmpegts.Reader{R: mcmpegts.NewBufferedReader(sconn)}
 	err := r.Initialize()

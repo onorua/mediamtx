@@ -13,7 +13,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/stream"
 	"github.com/bluenviron/mediamtx/internal/test"
 	"github.com/bluenviron/mediamtx/internal/unit"
-	srt "github.com/datarhei/gosrt"
+	srt "github.com/bluenviron/mediamtx/internal/srtcompat"
 	"github.com/stretchr/testify/require"
 )
 

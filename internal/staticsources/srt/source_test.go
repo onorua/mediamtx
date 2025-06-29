@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
-	srt "github.com/datarhei/gosrt"
+	srt "github.com/bluenviron/mediamtx/internal/srtcompat"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bluenviron/mediamtx/internal/conf"

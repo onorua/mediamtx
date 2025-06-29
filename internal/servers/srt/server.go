@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	srt "github.com/datarhei/gosrt"
+	srt "github.com/bluenviron/mediamtx/internal/srtcompat"
 	"github.com/google/uuid"
 
 	"github.com/bluenviron/mediamtx/internal/conf"
