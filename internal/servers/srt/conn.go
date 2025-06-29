@@ -203,8 +203,11 @@ func (c *conn) runPublish(streamID *streamID) error {
 }
 
 func (c *conn) runPublishReader(sconn *srt.Conn, path defs.Path) error {
-	sconn.SetReadDeadline(time.Now().Add(time.Duration(c.readTimeout)))
-	r := &mcmpegts.Reader{R: mcmpegts.NewBufferedReader(sconn)}
+	// Use optimized SRT connection wrapper
+	optimizedConn := srt.NewOptimizedSRTConn(sconn.GetSocket())
+	defer optimizedConn.Close()
+
+	r := &mcmpegts.Reader{R: optimizedConn}
 	err := r.Initialize()
 	if err != nil {
 		return err
@@ -247,9 +250,27 @@ func (c *conn) runPublishReader(sconn *srt.Conn, path defs.Path) error {
 	}
 
 	for {
-		err = r.Read()
-		if err != nil {
-			return err
+		// Check if context was cancelled (shutdown) before each read
+		select {
+		case <-c.ctx.Done():
+			return fmt.Errorf("terminated")
+		default:
+		}
+
+		// Use a goroutine to make the read interruptible
+		readDone := make(chan error, 1)
+		go func() {
+			readDone <- r.Read()
+		}()
+
+		// Wait for either read completion or context cancellation
+		select {
+		case <-c.ctx.Done():
+			return fmt.Errorf("terminated")
+		case err = <-readDone:
+			if err != nil {
+				return err
+			}
 		}
 	}
 }

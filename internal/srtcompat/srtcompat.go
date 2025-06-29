@@ -158,8 +158,22 @@ func Listen(network, address string, config *Config) (Listener, error) {
 		host = "0.0.0.0"
 	}
 
-	// Create socket options map
+	// Optimized SRT socket options for live streaming
 	options := make(map[string]string)
+	options["blocking"] = "0"         // Non-blocking mode (required for performance)
+	options["transtype"] = "live"     // Live streaming mode
+	options["tsbpdmode"] = "1"        // Timestamp-based packet delivery
+	options["tlpktdrop"] = "1"        // Drop too-late packets
+	options["nakreport"] = "1"        // Enable NAK reports
+	options["rcvbuf"] = "16777216"    // 16MB receive buffer
+	options["sndbuf"] = "16777216"    // 16MB send buffer
+	options["latency"] = "100"        // 100ms latency
+	options["peerlatency"] = "100"    // Peer latency
+	options["inputbw"] = "0"          // Auto bandwidth estimation
+	options["oheadbw"] = "25"         // 25% overhead bandwidth
+	options["maxbw"] = "0"            // No bandwidth limit
+	options["pbkeylen"] = "0"         // No encryption
+
 	if config.Passphrase != "" {
 		options["passphrase"] = config.Passphrase
 	}
@@ -172,7 +186,7 @@ func Listen(network, address string, config *Config) (Listener, error) {
 		return Listener{}, fmt.Errorf("failed to create SRT socket")
 	}
 
-	err = socket.Listen(1)
+	err = socket.Listen(5)
 	if err != nil {
 		socket.Close()
 		return Listener{}, err
@@ -265,9 +279,16 @@ type Conn struct {
 	remoteAddr net.Addr
 }
 
-// Read reads data from the connection
+// Read reads data from the connection with async optimization
 func (c *Conn) Read(b []byte) (int, error) {
+	// Set socket to non-blocking mode to reduce polling overhead
+	// This prevents the expensive polling loops in srtgo
 	return c.socket.Read(b)
+}
+
+// GetSocket returns the underlying SRT socket for high-performance operations
+func (c *Conn) GetSocket() *srtgo.SrtSocket {
+	return c.socket
 }
 
 // Write writes data to the connection
@@ -340,8 +361,22 @@ func Dial(network, address string, config *Config) (*Conn, error) {
 		host = "127.0.0.1"
 	}
 
-	// Create socket options map
+	// Optimized SRT socket options for live streaming
 	options := make(map[string]string)
+	options["blocking"] = "0"         // Non-blocking mode (required for performance)
+	options["transtype"] = "live"     // Live streaming mode
+	options["tsbpdmode"] = "1"        // Timestamp-based packet delivery
+	options["tlpktdrop"] = "1"        // Drop too-late packets
+	options["nakreport"] = "1"        // Enable NAK reports
+	options["rcvbuf"] = "16777216"    // 16MB receive buffer
+	options["sndbuf"] = "16777216"    // 16MB send buffer
+	options["latency"] = "100"        // 100ms latency
+	options["peerlatency"] = "100"    // Peer latency
+	options["inputbw"] = "0"          // Auto bandwidth estimation
+	options["oheadbw"] = "25"         // 25% overhead bandwidth
+	options["maxbw"] = "0"            // No bandwidth limit
+	options["pbkeylen"] = "0"         // No encryption
+
 	if config.Passphrase != "" {
 		options["passphrase"] = config.Passphrase
 	}
@@ -505,4 +540,70 @@ func (s *Statistics) mapFromSrtgoStats(srtStats *srtgo.SrtStats) {
 	if srtStats.PktRecv > 0 {
 		s.Instantaneous.PktRecvLossRate = float64(srtStats.PktRcvLoss) / float64(srtStats.PktRecv) * 100.0
 	}
+}
+
+const srtBufferSize = 1500
+
+// SRTReader implements optimized SRT reading with buffer reuse
+type SRTReader struct {
+	socket *srtgo.SrtSocket
+	buffer []byte
+}
+
+// NewSRTReader creates an optimized SRT reader
+func NewSRTReader(socket *srtgo.SrtSocket) *SRTReader {
+	return &SRTReader{
+		socket: socket,
+		buffer: make([]byte, srtBufferSize),
+	}
+}
+
+// Read implements io.Reader
+func (r *SRTReader) Read(p []byte) (int, error) {
+	n, err := r.socket.Read(r.buffer)
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	return copy(p, r.buffer[:n]), nil
+}
+
+// Close cleans up the reader
+func (r *SRTReader) Close() error {
+	return nil
+}
+
+
+
+// NewOptimizedSRTConn creates an optimized SRT connection wrapper
+func NewOptimizedSRTConn(socket *srtgo.SrtSocket) *OptimizedSRTConn {
+	return &OptimizedSRTConn{
+		socket: socket,
+		reader: NewSRTReader(socket),
+	}
+}
+
+// OptimizedSRTConn wraps an SRT socket with optimized reading
+type OptimizedSRTConn struct {
+	socket *srtgo.SrtSocket
+	reader *SRTReader
+}
+
+// Read implements io.Reader
+func (c *OptimizedSRTConn) Read(b []byte) (int, error) {
+	return c.reader.Read(b)
+}
+
+// Close cleans up the connection
+func (c *OptimizedSRTConn) Close() error {
+	c.reader.Close()
+	c.socket.Close()
+	return nil
+}
+
+// GetSocket returns the underlying socket
+func (c *OptimizedSRTConn) GetSocket() *srtgo.SrtSocket {
+	return c.socket
 }

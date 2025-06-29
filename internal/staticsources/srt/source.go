@@ -2,8 +2,6 @@
 package srt
 
 import (
-	"time"
-
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	mcmpegts "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
 	srt "github.com/bluenviron/mediamtx/internal/srtcompat"
@@ -69,8 +67,11 @@ func (s *Source) Run(params defs.StaticSourceRunParams) error {
 }
 
 func (s *Source) runReader(sconn *srt.Conn) error {
-	sconn.SetReadDeadline(time.Now().Add(time.Duration(s.ReadTimeout)))
-	r := &mcmpegts.Reader{R: mcmpegts.NewBufferedReader(sconn)}
+	// Use optimized SRT connection wrapper
+	optimizedConn := srt.NewOptimizedSRTConn(sconn.GetSocket())
+	defer optimizedConn.Close()
+
+	r := &mcmpegts.Reader{R: optimizedConn}
 	err := r.Initialize()
 	if err != nil {
 		return err
@@ -116,7 +117,6 @@ func (s *Source) runReader(sconn *srt.Conn) error {
 	stream = res.Stream
 
 	for {
-		sconn.SetReadDeadline(time.Now().Add(time.Duration(s.ReadTimeout)))
 		err := r.Read()
 		if err != nil {
 			return err

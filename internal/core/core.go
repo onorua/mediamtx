@@ -218,24 +218,7 @@ outer:
 	}
 
 	p.ctxCancel()
-
-	// Use clean shutdown with a safety timeout
-	// The SRT server uses swarmer's clean shutdown pattern
-	shutdownDone := make(chan struct{})
-	go func() {
-		defer close(shutdownDone)
-		p.closeResources(nil, false)
-	}()
-
-	// Wait for clean shutdown with a reasonable timeout
-	select {
-	case <-shutdownDone:
-		// Clean shutdown completed successfully
-	case <-time.After(5 * time.Second):
-		// Safety timeout - some service is not shutting down cleanly
-		p.Log(logger.Warn, "shutdown timeout reached, forcing exit")
-		os.Exit(1)
-	}
+	p.closeResources(nil, false)
 }
 
 func (p *Core) createResources(initial bool) error {

@@ -91,6 +91,7 @@ type Server struct {
 	ctxCancel func()
 	wg        sync.WaitGroup
 	ln        srt.Listener
+	mutex     sync.Mutex
 	conns     map[*conn]struct{}
 
 	// in
@@ -187,19 +188,25 @@ outer:
 				parent:              s,
 			}
 			c.initialize()
+			s.mutex.Lock()
 			s.conns[c] = struct{}{}
+			s.mutex.Unlock()
 
 		case c := <-s.chCloseConn:
+			s.mutex.Lock()
 			delete(s.conns, c)
+			s.mutex.Unlock()
 
 		case req := <-s.chAPIConnsList:
 			data := &defs.APISRTConnList{
 				Items: []*defs.APISRTConn{},
 			}
 
+			s.mutex.Lock()
 			for c := range s.conns {
 				data.Items = append(data.Items, c.apiItem())
 			}
+			s.mutex.Unlock()
 
 			sort.Slice(data.Items, func(i, j int) bool {
 				return data.Items[i].Created.Before(data.Items[j].Created)
@@ -223,7 +230,9 @@ outer:
 				continue
 			}
 
+			s.mutex.Lock()
 			delete(s.conns, c)
+			s.mutex.Unlock()
 			c.Close()
 			req.res <- serverAPIConnsKickRes{}
 
@@ -233,11 +242,12 @@ outer:
 	}
 
 	s.ctxCancel()
-
 	s.ln.Close()
 }
 
 func (s *Server) findConnByUUID(uuid uuid.UUID) *conn {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	for sx := range s.conns {
 		if sx.uuid == uuid {
 			return sx
