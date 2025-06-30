@@ -327,6 +327,9 @@ func (s *session) runRead() (int, error) {
 		return 0, err
 	}
 
+	// Note: KLV data channels will be created by the client after connection is established
+	// The server will handle incoming data channels and send KLV data through them
+
 	s.mutex.Lock()
 	s.pc = pc
 	s.mutex.Unlock()

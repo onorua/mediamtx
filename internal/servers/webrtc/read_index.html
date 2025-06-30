@@ -36,6 +36,118 @@ html, body {
 	box-sizing: border-box;
 	text-shadow: 0 0 5px black;
 }
+#klv-data {
+	position: absolute;
+	top: 10px;
+	right: 10px;
+	background: rgba(0, 0, 0, 0.85);
+	color: white;
+	padding: 15px;
+	border-radius: 8px;
+	font-family: 'Courier New', monospace;
+	font-size: 12px;
+	max-width: 350px;
+	min-width: 280px;
+	word-wrap: break-word;
+	z-index: 1000;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	backdrop-filter: blur(5px);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+	transition: all 0.3s ease;
+}
+#klv-data:hover {
+	background: rgba(0, 0, 0, 0.95);
+	transform: translateY(-2px);
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+#klv-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 10px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+#klv-title {
+	font-weight: bold;
+	color: #4CAF50;
+	font-size: 14px;
+}
+#klv-status {
+	font-size: 10px;
+	padding: 2px 6px;
+	border-radius: 10px;
+	background: #4CAF50;
+	color: white;
+}
+#klv-stats {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 8px;
+	margin-bottom: 10px;
+	font-size: 10px;
+}
+.klv-stat {
+	background: rgba(255, 255, 255, 0.1);
+	padding: 4px 6px;
+	border-radius: 4px;
+	text-align: center;
+}
+.klv-stat-label {
+	color: #bbb;
+	font-size: 9px;
+}
+.klv-stat-value {
+	color: white;
+	font-weight: bold;
+}
+#klv-content {
+	background: rgba(255, 255, 255, 0.05);
+	padding: 8px;
+	border-radius: 4px;
+	border-left: 3px solid #4CAF50;
+	max-height: 200px;
+	overflow-y: auto;
+}
+#klv-packets {
+	max-height: 120px;
+	overflow-y: auto;
+	margin-top: 8px;
+}
+.klv-packet {
+	background: rgba(255, 255, 255, 0.05);
+	margin: 4px 0;
+	padding: 6px;
+	border-radius: 3px;
+	border-left: 2px solid #2196F3;
+	font-size: 10px;
+}
+.klv-packet-time {
+	color: #888;
+	font-size: 9px;
+}
+.klv-packet-data {
+	color: #fff;
+	word-break: break-all;
+	margin-top: 2px;
+}
+#klv-toggle {
+	position: absolute;
+	top: 10px;
+	right: 370px;
+	background: rgba(0, 0, 0, 0.7);
+	color: white;
+	border: none;
+	padding: 8px 12px;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 11px;
+	z-index: 1001;
+	transition: background 0.3s ease;
+}
+#klv-toggle:hover {
+	background: rgba(0, 0, 0, 0.9);
+}
 </style>
 <script defer src="./reader.js"></script>
 </head>
@@ -43,12 +155,64 @@ html, body {
 
 <video id="video"></video>
 <div id="message"></div>
+<button id="klv-toggle" style="display: none;" onclick="toggleKLVPanel()">Hide KLV</button>
+
+<div id="klv-data" style="display: none;">
+  <div id="klv-header">
+    <div id="klv-title">KLV Metadata</div>
+    <div id="klv-status">LIVE</div>
+  </div>
+  <div id="klv-stats">
+    <div class="klv-stat">
+      <div class="klv-stat-label">Packets</div>
+      <div class="klv-stat-value" id="klv-packet-count">0</div>
+    </div>
+    <div class="klv-stat">
+      <div class="klv-stat-label">Rate</div>
+      <div class="klv-stat-value" id="klv-packet-rate">0/s</div>
+    </div>
+    <div class="klv-stat">
+      <div class="klv-stat-label">Size</div>
+      <div class="klv-stat-value" id="klv-data-size">0 B</div>
+    </div>
+    <div class="klv-stat">
+      <div class="klv-stat-label">Last</div>
+      <div class="klv-stat-value" id="klv-last-time">Never</div>
+    </div>
+  </div>
+  <div id="klv-content">
+    <div><strong>Latest KLV Data:</strong></div>
+    <div id="klv-latest">No KLV data received</div>
+  </div>
+  <div id="klv-packets">
+    <div style="color: #888; text-align: center; padding: 10px; font-size: 10px;">
+      Recent KLV packets will appear here
+    </div>
+  </div>
+</div>
 
 <script>
 
 const video = document.getElementById('video');
 const message = document.getElementById('message');
+const klvData = document.getElementById('klv-data');
+const klvToggle = document.getElementById('klv-toggle');
+const klvLatest = document.getElementById('klv-latest');
+const klvPackets = document.getElementById('klv-packets');
+const klvPacketCount = document.getElementById('klv-packet-count');
+const klvPacketRate = document.getElementById('klv-packet-rate');
+const klvDataSize = document.getElementById('klv-data-size');
+const klvLastTime = document.getElementById('klv-last-time');
 let defaultControls = false;
+
+// KLV statistics
+let klvStats = {
+  totalPackets: 0,
+  totalBytes: 0,
+  lastPacketTime: 0,
+  packetTimes: [],
+  isVisible: false
+};
 
 const setMessage = (str) => {
   if (str !== '') {
@@ -80,19 +244,169 @@ const loadAttributesFromQuery = () => {
   defaultControls = video.controls;
 };
 
+const toggleKLVPanel = () => {
+  klvStats.isVisible = !klvStats.isVisible;
+  klvData.style.display = klvStats.isVisible ? 'block' : 'none';
+  klvToggle.textContent = klvStats.isVisible ? 'Hide KLV' : 'Show KLV';
+};
+
+
+
+const formatBytes = (bytes) => {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+};
+
+const formatKLVData = (data, maxLength = 32) => {
+  const hex = Array.from(data, byte => byte.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+  if (hex.length > maxLength * 3) {
+    return hex.substring(0, maxLength * 3) + '...';
+  }
+  return hex;
+};
+
+const formatKLVDataHex = (hexString, maxLength = 32) => {
+  // Add spaces between hex pairs for readability
+  const formatted = hexString.replace(/(.{2})/g, '$1 ').trim().toUpperCase();
+  if (formatted.length > maxLength * 3) {
+    return formatted.substring(0, maxLength * 3) + '...';
+  }
+  return formatted;
+};
+
+const updateKLVStats = () => {
+  const now = Date.now();
+
+  // Calculate packet rate (packets per second over last 10 seconds)
+  klvStats.packetTimes = klvStats.packetTimes.filter(time => now - time < 10000);
+  const rate = klvStats.packetTimes.length / 10;
+
+  // Update display
+  klvPacketCount.textContent = klvStats.totalPackets;
+  klvPacketRate.textContent = rate.toFixed(1) + '/s';
+  klvDataSize.textContent = formatBytes(klvStats.totalBytes);
+
+  if (klvStats.lastPacketTime > 0) {
+    const timeDiff = now - klvStats.lastPacketTime;
+    if (timeDiff < 1000) {
+      klvLastTime.textContent = 'Now';
+    } else if (timeDiff < 60000) {
+      klvLastTime.textContent = Math.floor(timeDiff / 1000) + 's ago';
+    } else {
+      klvLastTime.textContent = new Date(klvStats.lastPacketTime).toLocaleTimeString();
+    }
+  }
+};
+
+const addKLVPacket = (klvMessage) => {
+  const now = Date.now();
+  klvStats.totalPackets++;
+
+  // Handle ImpleoTV-compatible format
+  let klvHexData, klvSize, klvPts, klvNtp;
+
+  if (klvMessage.raw_data) {
+    // New ImpleoTV format
+    klvHexData = klvMessage.raw_data;
+    klvSize = klvMessage.size || 0;
+    klvPts = klvMessage.pts || 0;
+    klvNtp = new Date(klvMessage.ntp / 1000000); // Convert nanoseconds to milliseconds
+  } else if (klvMessage.data) {
+    // Legacy format
+    klvHexData = Array.from(klvMessage.data, byte =>
+      byte.toString(16).padStart(2, '0').toUpperCase()
+    ).join('');
+    klvSize = klvMessage.data.length;
+    klvPts = klvMessage.pts || 0;
+    klvNtp = new Date(klvMessage.ntp);
+  } else {
+    console.error('Unknown KLV message format:', klvMessage);
+    return;
+  }
+
+  klvStats.totalBytes += klvSize;
+  klvStats.lastPacketTime = now;
+  klvStats.packetTimes.push(now);
+
+  // Show KLV panel if first packet
+  if (klvStats.totalPackets === 1) {
+    klvData.style.display = 'block';
+    klvToggle.style.display = 'block';
+    klvStats.isVisible = true;
+  }
+
+  // Update latest data
+  const timestamp = klvNtp.toLocaleTimeString();
+  klvLatest.innerHTML = `
+    <div><strong>Timestamp:</strong> ${timestamp}</div>
+    <div><strong>PTS:</strong> ${klvPts}</div>
+    <div><strong>Size:</strong> ${klvSize} bytes</div>
+    <div><strong>Data:</strong> ${formatKLVDataHex(klvHexData)}</div>
+  `;
+
+  // Add to packet history
+  const packetDiv = document.createElement('div');
+  packetDiv.className = 'klv-packet';
+  packetDiv.innerHTML = `
+    <div class="klv-packet-time">${timestamp} - ${klvSize} bytes</div>
+    <div class="klv-packet-data">${formatKLVDataHex(klvHexData, 24)}</div>
+  `;
+
+  // Add to top of packet list
+  if (klvPackets.firstChild && klvPackets.firstChild.style) {
+    klvPackets.removeChild(klvPackets.firstChild); // Remove placeholder
+  }
+  klvPackets.insertBefore(packetDiv, klvPackets.firstChild);
+
+  // Keep only last 10 packets
+  while (klvPackets.children.length > 10) {
+    klvPackets.removeChild(klvPackets.lastChild);
+  }
+
+  updateKLVStats();
+};
+
 window.addEventListener('DOMContentLoaded', () => {
   loadAttributesFromQuery();
+
+  console.log('MediaMTX WebRTC Reader initializing...');
+  console.log('KLV display elements found:', {
+    klvData: !!klvData,
+    klvToggle: !!klvToggle,
+    klvLatest: !!klvLatest,
+    klvPackets: !!klvPackets
+  });
 
   new MediaMTXWebRTCReader({
     url: new URL('whep', window.location.href) + window.location.search,
     onError: (err) => {
+      console.error('WebRTC Error:', err);
       setMessage(err);
     },
     onTrack: (evt) => {
+      console.log('WebRTC Track received:', evt);
       setMessage('');
       video.srcObject = evt.streams[0];
     },
+    onKLVData: (klvMessage) => {
+      console.log('KLV Data received:', klvMessage);
+      addKLVPacket(klvMessage);
+    },
   });
+
+  // Update KLV stats every second
+  setInterval(updateKLVStats, 1000);
+
+  // Show test button if no stream is available after 5 seconds
+  setTimeout(() => {
+    if (klvStats.totalPackets === 0) {
+      console.log('No KLV data received yet, showing test button');
+      document.getElementById('klv-test').style.display = 'block';
+    }
+  }, 5000);
 });
 
 </script>

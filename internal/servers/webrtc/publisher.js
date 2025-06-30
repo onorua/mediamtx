@@ -301,6 +301,29 @@ class MediaMTXWebRTCPublisher {
       this.pc.addTrack(track, this.conf.stream);
     });
 
+    // Create KLV data channel if needed
+    if (this.conf.enableKLV) {
+      this.klvDataChannel = this.pc.createDataChannel('klv', {
+        ordered: true,
+        maxRetransmits: 0
+      });
+
+      this.klvDataChannel.onopen = () => {
+        console.log('KLV data channel opened');
+        if (this.conf.onKLVChannelOpen) {
+          this.conf.onKLVChannelOpen(this.klvDataChannel);
+        }
+      };
+
+      this.klvDataChannel.onclose = () => {
+        console.log('KLV data channel closed');
+      };
+
+      this.klvDataChannel.onerror = (error) => {
+        console.error('KLV data channel error:', error);
+      };
+    }
+
     return this.pc.createOffer()
       .then((offer) => {
         this.offerData = MediaMTXWebRTCPublisher.#parseOffer(offer.sdp);
@@ -423,6 +446,26 @@ class MediaMTXWebRTCPublisher {
       if (this.conf.onConnected !== undefined) {
         this.conf.onConnected();
       }
+    }
+  }
+
+  sendKLVData(klvData) {
+    if (this.klvDataChannel && this.klvDataChannel.readyState === 'open') {
+      const message = {
+        type: 'klv',
+        timestamp: Date.now() * 1000000, // Convert to nanoseconds
+        pts: klvData.pts || Date.now() * 1000000,
+        data: klvData.data,
+        ntp: new Date().toISOString()
+      };
+
+      try {
+        this.klvDataChannel.send(JSON.stringify(message));
+      } catch (error) {
+        console.error('Failed to send KLV data:', error);
+      }
+    } else {
+      console.warn('KLV data channel not available');
     }
   }
 

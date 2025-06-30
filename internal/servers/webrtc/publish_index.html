@@ -146,6 +146,23 @@ select option {
 				<input id="audio-voice" type="checkbox" checked>
 			</div>
 		</div>
+
+		<div class="item">
+			<label for="klv-enable">enable KLV data</label>
+			<div>
+				<input id="klv-enable" type="checkbox">
+			</div>
+		</div>
+
+		<div class="item" id="klv-controls" style="display: none;">
+			<label for="klv-data">KLV data (hex)</label>
+			<input id="klv-data" type="text" placeholder="06 0E 2B 34..." />
+		</div>
+
+		<div class="item" id="klv-send-controls" style="display: none;">
+			<label></label>
+			<button id="send-klv-button" type="button">Send KLV Data</button>
+		</div>
 	</div>
 
 	<div id="submit-line">
@@ -178,6 +195,14 @@ const audioForm = {
   voice: document.getElementById('audio-voice'),
 };
 
+const klvForm = {
+  enable: document.getElementById('klv-enable'),
+  data: document.getElementById('klv-data'),
+  sendButton: document.getElementById('send-klv-button'),
+  controls: document.getElementById('klv-controls'),
+  sendControls: document.getElementById('klv-send-controls'),
+};
+
 const setMessage = (str) => {
   message.innerText = str;
 };
@@ -185,7 +210,7 @@ const setMessage = (str) => {
 const onStream = (stream) => {
   video.srcObject = stream;
 
-  new MediaMTXWebRTCPublisher({
+  const publisher = new MediaMTXWebRTCPublisher({
     url: new URL('whip', window.location.href) + window.location.search,
     stream,
     videoCodec: videoForm.codec.value,
@@ -193,11 +218,32 @@ const onStream = (stream) => {
     audioCodec: audioForm.codec.value,
     audioBitrate: audioForm.bitrate.value,
     audioVoice: audioForm.voice.checked,
+    enableKLV: klvForm.enable.checked,
     onError: (err) => {
       setMessage(err);
     },
     onConnected: (evt) => {
       setMessage('');
+    },
+    onKLVChannelOpen: (channel) => {
+      klvForm.controls.style.display = 'block';
+      klvForm.sendControls.style.display = 'block';
+
+      klvForm.sendButton.onclick = () => {
+        const hexData = klvForm.data.value.replace(/\s+/g, '');
+        if (hexData.length % 2 !== 0) {
+          alert('Invalid hex data: must be even number of characters');
+          return;
+        }
+
+        const data = new Uint8Array(hexData.match(/.{2}/g).map(byte => parseInt(byte, 16)));
+        publisher.sendKLVData({
+          data: data,
+          pts: Date.now() * 1000000
+        });
+
+        klvForm.data.value = '';
+      };
     },
   });
 };
@@ -367,7 +413,17 @@ const populateOptions = () => {
 
 const setupEventListeners = () => {
   const url = new URL(window.location.href);
-  const inputs = [...Object.values(videoForm), ...Object.values(audioForm)]
+  const inputs = [...Object.values(videoForm), ...Object.values(audioForm), klvForm.enable, klvForm.data]
+
+  // KLV enable checkbox handler
+  klvForm.enable.addEventListener('change', () => {
+    if (klvForm.enable.checked) {
+      klvForm.controls.style.display = 'block';
+    } else {
+      klvForm.controls.style.display = 'none';
+      klvForm.sendControls.style.display = 'none';
+    }
+  });
 
   for (const input of inputs) {
     if (input instanceof HTMLInputElement && input.type === 'text') {
@@ -395,7 +451,7 @@ const setupEventListeners = () => {
 
 const loadValuesFromQuery = () => {
   const params = new URLSearchParams(window.location.search);
-  const inputs = [...Object.values(videoForm), ...Object.values(audioForm)]
+  const inputs = [...Object.values(videoForm), ...Object.values(audioForm), klvForm.enable, klvForm.data]
 
   for (const input of inputs) {
     const value = params.get(input.id);

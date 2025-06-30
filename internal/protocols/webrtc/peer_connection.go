@@ -108,6 +108,9 @@ type PeerConnection struct {
 	ctx               context.Context
 	ctxCancel         context.CancelFunc
 	incomingTracks    []*IncomingTrack
+	dataChannels      map[string]*webrtc.DataChannel
+	dataChannelMutex  sync.RWMutex
+	onDataChannel     func(*webrtc.DataChannel)
 }
 
 // Start starts the peer connection.
@@ -239,6 +242,7 @@ func (co *PeerConnection) Start() error {
 	co.closed = make(chan struct{})
 	co.gatheringDone = make(chan struct{})
 	co.incomingTrack = make(chan trackRecvPair)
+	co.dataChannels = make(map[string]*webrtc.DataChannel)
 
 	co.ctx, co.ctxCancel = context.WithCancel(context.Background())
 
@@ -274,6 +278,17 @@ func (co *PeerConnection) Start() error {
 			}
 		})
 	}
+
+	// Set up data channel event handler
+	co.wr.OnDataChannel(func(dc *webrtc.DataChannel) {
+		co.dataChannelMutex.Lock()
+		co.dataChannels[dc.Label()] = dc
+		co.dataChannelMutex.Unlock()
+
+		if co.onDataChannel != nil {
+			co.onDataChannel(dc)
+		}
+	})
 
 	co.wr.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		co.stateChangeMutex.Lock()
@@ -345,6 +360,14 @@ func (co *PeerConnection) Close() {
 	for _, track := range co.OutgoingTracks {
 		track.close()
 	}
+
+	// Close all data channels
+	co.dataChannelMutex.Lock()
+	for _, dc := range co.dataChannels {
+		dc.Close() //nolint:errcheck
+	}
+	co.dataChannels = make(map[string]*webrtc.DataChannel)
+	co.dataChannelMutex.Unlock()
 
 	co.ctxCancel()
 	co.wr.GracefulClose() //nolint:errcheck
@@ -509,6 +532,38 @@ func (co *PeerConnection) NewLocalCandidate() <-chan *webrtc.ICECandidateInit {
 func (co *PeerConnection) GatheringDone() <-chan struct{} {
 	return co.gatheringDone
 }
+
+// CreateDataChannel creates a new data channel.
+func (co *PeerConnection) CreateDataChannel(label string, options *webrtc.DataChannelInit) (*webrtc.DataChannel, error) {
+	if co.wr == nil {
+		return nil, fmt.Errorf("peer connection not initialized")
+	}
+
+	dc, err := co.wr.CreateDataChannel(label, options)
+	if err != nil {
+		return nil, err
+	}
+
+	co.dataChannelMutex.Lock()
+	co.dataChannels[label] = dc
+	co.dataChannelMutex.Unlock()
+
+	return dc, nil
+}
+
+// GetDataChannel returns a data channel by label.
+func (co *PeerConnection) GetDataChannel(label string) *webrtc.DataChannel {
+	co.dataChannelMutex.RLock()
+	defer co.dataChannelMutex.RUnlock()
+	return co.dataChannels[label]
+}
+
+// SetOnDataChannel sets the data channel event handler.
+func (co *PeerConnection) SetOnDataChannel(handler func(*webrtc.DataChannel)) {
+	co.onDataChannel = handler
+}
+
+
 
 // LocalCandidate returns the local candidate.
 func (co *PeerConnection) LocalCandidate() string {

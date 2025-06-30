@@ -638,6 +638,53 @@ func setupAudioTrack(
 	return nil, nil
 }
 
+func setupKLVDataChannel(
+	stream *stream.Stream,
+	reader stream.Reader,
+	pc *PeerConnection,
+) (*format.KLV, error) {
+	var klvFormat *format.KLV
+	media := stream.Desc.FindFormat(&klvFormat)
+	if klvFormat == nil {
+		return nil, nil
+	}
+
+	// Create KLV data channel handler
+	klvHandler := NewKLVDataChannelHandler(pc, reader)
+	err := klvHandler.SetupForPublishing()
+	if err != nil {
+		return nil, err
+	}
+
+	// Set up handler for incoming data channels from client
+	// The client will create the KLV data channel after connection is established
+	pc.SetOnDataChannel(func(dc *webrtc.DataChannel) {
+		if dc.Label() == "klv" {
+
+			klvHandler.SetDataChannel(dc)
+		}
+	})
+
+	// Add reader for KLV data
+	stream.AddReader(
+		reader,
+		media,
+		klvFormat,
+		func(u unit.Unit) error {
+			tunit := u.(*unit.KLV)
+
+			if tunit.Packets == nil {
+				reader.Log(logger.Info, "KLV unit has no packets")
+				return nil
+			}
+
+
+			return klvHandler.SendKLVData(tunit)
+		})
+
+	return klvFormat, nil
+}
+
 // FromStream maps a MediaMTX stream to a WebRTC connection
 func FromStream(
 	stream *stream.Stream,
@@ -654,14 +701,19 @@ func FromStream(
 		return err
 	}
 
-	if videoFormat == nil && audioFormat == nil {
+	klvFormat, err := setupKLVDataChannel(stream, reader, pc)
+	if err != nil {
+		return err
+	}
+
+	if videoFormat == nil && audioFormat == nil && klvFormat == nil {
 		return errNoSupportedCodecsFrom
 	}
 
 	n := 1
 	for _, media := range stream.Desc.Medias {
 		for _, forma := range media.Formats {
-			if forma != videoFormat && forma != audioFormat {
+			if forma != videoFormat && forma != audioFormat && forma != klvFormat {
 				reader.Log(logger.Warn, "skipping track %d (%s)", n, forma.Codec())
 			}
 			n++

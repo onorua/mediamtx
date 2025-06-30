@@ -428,6 +428,10 @@ class MediaMTXWebRTCReader {
     this.pc.onicecandidate = (evt) => this.#onLocalCandidate(evt);
     this.pc.onconnectionstatechange = () => this.#onConnectionState();
     this.pc.ontrack = (evt) => this.#onTrack(evt);
+    this.pc.ondatachannel = (evt) => this.#onDataChannel(evt);
+
+    // Create KLV data channel with retry mechanism for browser compatibility
+    this.#createKLVDataChannel();
 
     return this.pc.createOffer()
       .then((offer) => {
@@ -527,7 +531,10 @@ class MediaMTXWebRTCReader {
   }
 
   #onConnectionState() {
+    console.log('Connection state changed to:', this.pc.connectionState);
+
     if (this.state !== 'running') {
+      console.log('State is not running, ignoring connection state change');
       return;
     }
 
@@ -545,6 +552,103 @@ class MediaMTXWebRTCReader {
   #onTrack(evt) {
     if (this.conf.onTrack !== undefined) {
       this.conf.onTrack(evt);
+    }
+  }
+
+  #createKLVDataChannel() {
+    // Try to create data channel with multiple approaches for browser compatibility
+    const createDataChannel = () => {
+      try {
+        if (this.klvDataChannel) {
+          return true; // Already created
+        }
+
+        this.klvDataChannel = this.pc.createDataChannel('klv', {
+          ordered: true,
+          maxRetransmits: 3
+        });
+        this.klvDataChannel.binaryType = 'arraybuffer';
+        this.#setupKLVDataChannel(this.klvDataChannel);
+
+        return true;
+      } catch (error) {
+        console.error('Failed to create KLV data channel:', error);
+        return false;
+      }
+    };
+
+    // Try immediate creation
+    if (createDataChannel()) {
+      return;
+    }
+
+    // If immediate creation fails, try after a short delay (for browser compatibility)
+    setTimeout(() => {
+      if (!this.klvDataChannel) {
+        createDataChannel();
+      }
+    }, 100);
+
+    // Also try when connection state changes
+    const originalOnConnectionState = this.pc.onconnectionstatechange;
+    this.pc.onconnectionstatechange = () => {
+      if (originalOnConnectionState) {
+        originalOnConnectionState();
+      }
+
+      if (this.pc.connectionState === 'connected' && !this.klvDataChannel) {
+        createDataChannel();
+      }
+    };
+  }
+
+  #setupKLVDataChannel(channel) {
+    channel.onopen = () => {
+      // KLV data channel opened
+    };
+
+    channel.onclose = () => {
+      // KLV data channel closed
+    };
+
+    channel.onerror = (error) => {
+      console.error('KLV data channel error:', error);
+    };
+
+    channel.onmessage = (event) => {
+      try {
+        // Handle binary data (following ImpleoTV pattern)
+        let dataView = new DataView(event.data);
+        let decoder = new TextDecoder('utf8');
+        let msg = JSON.parse(decoder.decode(dataView));
+
+        switch (msg.type) {
+          case 'klv':
+            if (this.conf.onKLVData !== undefined) {
+              this.conf.onKLVData(msg.klvs);
+            }
+            break;
+          case 'msg':
+            // Handle message
+            break;
+          case 'state':
+            // Handle state
+            break;
+          default:
+            // Unknown message type
+            break;
+        }
+      } catch (error) {
+        console.error('Failed to parse KLV data:', error);
+      }
+    };
+  }
+
+  #onDataChannel(evt) {
+    const channel = evt.channel;
+
+    if (channel.label === 'klv') {
+      this.#setupKLVDataChannel(channel);
     }
   }
 }

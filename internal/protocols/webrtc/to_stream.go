@@ -16,7 +16,7 @@ import (
 
 var errNoSupportedCodecsTo = errors.New(
 	"the stream doesn't contain any supported codec, which are currently " +
-		"AV1, VP9, VP8, H265, H264, Opus, G722, G711, LPCM")
+		"AV1, VP9, VP8, H265, H264, Opus, G722, G711, LPCM, KLV")
 
 // ToStream maps a WebRTC connection to a MediaMTX stream.
 func ToStream(
@@ -154,9 +154,62 @@ func ToStream(
 		medias = append(medias, medi)
 	}
 
+	// Check for KLV data channel only if we have KLV data in the stream
+	klvMedia, err := setupKLVDataChannelForReading(pc, stream)
+	if err != nil {
+		return nil, err
+	}
+	if klvMedia != nil {
+		medias = append(medias, klvMedia)
+	}
+
 	if len(medias) == 0 {
 		return nil, errNoSupportedCodecsTo
 	}
 
 	return medias, nil
+}
+
+func setupKLVDataChannelForReading(pc *PeerConnection, stream **stream.Stream) (*description.Media, error) {
+	// Only set up KLV data channel if stream is available
+	if stream == nil || *stream == nil {
+		return nil, nil
+	}
+
+	// Check if the stream actually has KLV data
+	var hasKLV bool
+	for _, media := range (*stream).Desc.Medias {
+		for _, forma := range media.Formats {
+			if _, ok := forma.(*format.KLV); ok {
+				hasKLV = true
+				break
+			}
+		}
+		if hasKLV {
+			break
+		}
+	}
+
+	if !hasKLV {
+		return nil, nil
+	}
+
+	// Create KLV format for data channel
+	klvFormat := &format.KLV{
+		PayloadTyp: 96, // Use dynamic payload type
+	}
+
+	klvMedia := &description.Media{
+		Type:    description.MediaTypeApplication,
+		Formats: []format.Format{klvFormat},
+	}
+
+	// Create KLV data channel handler for reading
+	klvHandler := NewKLVDataChannelHandler(pc, pc.Log)
+	err := klvHandler.SetupForReading(*stream, nil, klvFormat)
+	if err != nil {
+		return nil, err
+	}
+
+	return klvMedia, nil
 }
