@@ -87,7 +87,6 @@ func (h *KLVDataChannelHandler) CreateDataChannelAfterStart() error {
 	h.dc = dc
 	h.setupDataChannelEvents()
 
-
 	return nil
 }
 
@@ -238,8 +237,6 @@ func (h *KLVDataChannelHandler) SendKLVData(u *unit.KLV) error {
 		// This prevents session closure during connection establishment
 		return nil
 	}
-
-
 
 	// Create ImpleoTV-compatible message format
 	// For now, send raw KLV data as hex string in klvs field

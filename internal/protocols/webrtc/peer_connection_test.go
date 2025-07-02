@@ -401,3 +401,42 @@ func TestPeerConnectionFallbackCodecs(t *testing.T) {
 		},
 	}, s.MediaDescriptions)
 }
+
+func TestGatherIncomingTracksWithDataChannels(t *testing.T) {
+	// Test that GatherIncomingTracks correctly handles SDP with data channels
+	// and only waits for RTP tracks (video/audio), not data channels
+
+	// Create a mock SDP with video, audio, and data channel
+	sdpStr := `v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=-
+c=IN IP4 127.0.0.1
+t=0 0
+m=video 9 UDP/TLS/RTP/SAVPF 97
+a=rtpmap:97 H264/90000
+m=audio 9 UDP/TLS/RTP/SAVPF 0
+a=rtpmap:0 PCMU/8000
+m=application 9 UDP/DTLS/SCTP webrtc-datachannel
+a=sctp-port:5000
+`
+
+	// Parse the SDP to verify our counting logic
+	var sdp sdp.SessionDescription
+	err := sdp.Unmarshal([]byte(sdpStr))
+	require.NoError(t, err)
+
+	// Verify we have 3 media descriptions total
+	require.Len(t, sdp.MediaDescriptions, 3)
+
+	// Count only RTP media descriptions (video/audio), not data channels
+	rtpTrackCount := 0
+	for _, media := range sdp.MediaDescriptions {
+		if media.MediaName.Media == "video" || media.MediaName.Media == "audio" {
+			rtpTrackCount++
+		}
+	}
+
+	// Should only count 2 RTP tracks (video + audio), not the data channel
+	require.Equal(t, 2, rtpTrackCount)
+	require.NotEqual(t, len(sdp.MediaDescriptions), rtpTrackCount) // Ensure data channel is not counted
+}

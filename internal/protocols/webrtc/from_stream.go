@@ -660,7 +660,6 @@ func setupKLVDataChannel(
 	// The client will create the KLV data channel after connection is established
 	pc.SetOnDataChannel(func(dc *webrtc.DataChannel) {
 		if dc.Label() == "klv" {
-
 			klvHandler.SetDataChannel(dc)
 		}
 	})
@@ -677,7 +676,6 @@ func setupKLVDataChannel(
 				reader.Log(logger.Info, "KLV unit has no packets")
 				return nil
 			}
-
 
 			return klvHandler.SendKLVData(tunit)
 		})

@@ -476,7 +476,14 @@ func (co *PeerConnection) GatherIncomingTracks(ctx context.Context) error {
 	var sdp sdp.SessionDescription
 	sdp.Unmarshal([]byte(co.wr.RemoteDescription().SDP)) //nolint:errcheck
 
-	maxTrackCount := len(sdp.MediaDescriptions)
+	// Count only RTP media descriptions (video/audio), not data channels
+	// Data channels don't send tracks via the incomingTrack channel
+	maxTrackCount := 0
+	for _, media := range sdp.MediaDescriptions {
+		if media.MediaName.Media == "video" || media.MediaName.Media == "audio" {
+			maxTrackCount++
+		}
+	}
 
 	t := time.NewTimer(time.Duration(co.TrackGatherTimeout))
 	defer t.Stop()
@@ -562,8 +569,6 @@ func (co *PeerConnection) GetDataChannel(label string) *webrtc.DataChannel {
 func (co *PeerConnection) SetOnDataChannel(handler func(*webrtc.DataChannel)) {
 	co.onDataChannel = handler
 }
-
-
 
 // LocalCandidate returns the local candidate.
 func (co *PeerConnection) LocalCandidate() string {
