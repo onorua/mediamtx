@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
 	"github.com/bluenviron/gortsplib/v4/pkg/format/rtpav1"
 	"github.com/bluenviron/gortsplib/v4/pkg/format/rtph264"
@@ -638,6 +639,105 @@ func setupAudioTrack(
 	return nil, nil
 }
 
+// setupKLVDataChannel sets up KLV metadata transmission via WebRTC data channel
+func setupKLVDataChannel(
+	stream *stream.Stream,
+	reader stream.Reader,
+	pc *PeerConnection,
+) (format.Format, error) {
+	// Look for KLV format in the stream (using Generic format with KLV RTPMap)
+	var klvFormat format.Format
+	var klvMedia *description.Media
+
+	for _, media := range stream.Desc.Medias {
+		if media == nil {
+			continue
+		}
+		reader.Log(logger.Debug, "checking media type: %s", media.Type)
+		for _, forma := range media.Formats {
+			reader.Log(logger.Debug, "checking format: %T, codec: %s", forma, forma.Codec())
+
+			// Check for Generic format with KLV RTPMap
+			if genericFmt, ok := forma.(*format.Generic); ok {
+				reader.Log(logger.Debug, "found Generic format with RTPMap: %s", genericFmt.RTPMap())
+				if genericFmt.RTPMap() == "KLV/90000" {
+					klvFormat = genericFmt
+					klvMedia = media
+					break
+				}
+			}
+
+			// Check for KLV format (using type assertion)
+			if _, ok := forma.(*format.KLV); ok {
+				reader.Log(logger.Debug, "found KLV format")
+				klvFormat = forma
+				klvMedia = media
+				break
+			}
+
+			// Also check for internal KLV format by codec name
+			if forma.Codec() == "KLV" {
+				reader.Log(logger.Debug, "found format with KLV codec")
+				klvFormat = forma
+				klvMedia = media
+				break
+			}
+		}
+		if klvFormat != nil {
+			break
+		}
+	}
+
+	if klvFormat == nil {
+		// No KLV format found, return nil without error
+		return nil, nil
+	}
+
+	reader.Log(logger.Info, "setting up KLV metadata transmission via WebRTC data channel")
+
+	// Add reader for KLV data and send via data channel
+	stream.AddReader(
+		reader,
+		klvMedia,
+		klvFormat,
+		func(u unit.Unit) error {
+			// Handle both Generic and KLV units
+			var klvData []byte
+
+			switch tunit := u.(type) {
+			case *unit.Generic:
+				// Extract KLV data from Generic unit RTP packets
+				if tunit.RTPPackets != nil {
+					for _, pkt := range tunit.RTPPackets {
+						klvData = append(klvData, pkt.Payload...)
+					}
+				}
+			case *unit.KLV:
+				// Extract KLV data from KLV unit
+				if tunit.Unit != nil {
+					klvData = append(klvData, tunit.Unit...)
+				}
+			default:
+				return nil // Unknown unit type, skip
+			}
+
+			if len(klvData) == 0 {
+				return nil
+			}
+
+			// Send KLV data through WebRTC data channel
+			err := pc.SendKLVData(klvData)
+			if err != nil {
+				reader.Log(logger.Debug, "failed to send KLV data via data channel: %v", err)
+				// Don't return error to avoid breaking the stream
+			}
+
+			return nil
+		})
+
+	return klvFormat, nil
+}
+
 // FromStream maps a MediaMTX stream to a WebRTC connection
 func FromStream(
 	stream *stream.Stream,
@@ -658,10 +758,22 @@ func FromStream(
 		return errNoSupportedCodecsFrom
 	}
 
+	// Setup KLV metadata handling via data channel
+	klvFormat, err := setupKLVDataChannel(stream, reader, pc)
+	if err != nil {
+		reader.Log(logger.Warn, "failed to setup KLV data channel: %v", err)
+	}
+
 	n := 1
 	for _, media := range stream.Desc.Medias {
+		if media == nil {
+			continue
+		}
 		for _, forma := range media.Formats {
-			if forma != videoFormat && forma != audioFormat {
+			if forma == nil {
+				continue
+			}
+			if forma != videoFormat && forma != audioFormat && forma != klvFormat {
 				reader.Log(logger.Warn, "skipping track %d (%s)", n, forma.Codec())
 			}
 			n++

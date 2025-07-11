@@ -108,6 +108,10 @@ type PeerConnection struct {
 	ctx               context.Context
 	ctxCancel         context.CancelFunc
 	incomingTracks    []*IncomingTrack
+
+	// KLV data channel support
+	klvDataChannel  *webrtc.DataChannel
+	klvChannelReady chan struct{}
 }
 
 // Start starts the peer connection.
@@ -239,6 +243,7 @@ func (co *PeerConnection) Start() error {
 	co.closed = make(chan struct{})
 	co.gatheringDone = make(chan struct{})
 	co.incomingTrack = make(chan trackRecvPair)
+	co.klvChannelReady = make(chan struct{})
 
 	co.ctx, co.ctxCancel = context.WithCancel(context.Background())
 
@@ -250,7 +255,20 @@ func (co *PeerConnection) Start() error {
 				return err
 			}
 		}
+
+		// Setup KLV data channel for publishing
+		err = co.setupKLVDataChannel()
+		if err != nil {
+			co.wr.GracefulClose() //nolint:errcheck
+			return err
+		}
 	} else {
+		// Setup KLV data channel for reading (WHEP)
+		err = co.setupKLVDataChannel()
+		if err != nil {
+			co.wr.GracefulClose() //nolint:errcheck
+			return err
+		}
 		_, err = co.wr.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
 			Direction: webrtc.RTPTransceiverDirectionRecvonly,
 		})
@@ -354,6 +372,72 @@ func (co *PeerConnection) Close() {
 	// since it is executed in an uncontrolled goroutine.
 	// https://github.com/pion/webrtc/blob/4742d1fd54abbc3f81c3b56013654574ba7254f3/peerconnection.go#L509
 	<-co.closed
+}
+
+// setupKLVDataChannel sets up a data channel for KLV metadata transmission
+func (co *PeerConnection) setupKLVDataChannel() error {
+	// Create data channel for KLV metadata
+	dataChannelInit := &webrtc.DataChannelInit{
+		Ordered:        &[]bool{true}[0],  // Ensure ordered delivery
+		MaxRetransmits: &[]uint16{3}[0],   // Allow some retransmissions for reliability
+	}
+
+	var err error
+	co.klvDataChannel, err = co.wr.CreateDataChannel("klv", dataChannelInit)
+	if err != nil {
+		return fmt.Errorf("failed to create KLV data channel: %w", err)
+	}
+
+	// Set up data channel event handlers
+	co.klvDataChannel.OnOpen(func() {
+		co.Log.Log(logger.Info, "KLV data channel opened")
+		close(co.klvChannelReady)
+	})
+
+	co.klvDataChannel.OnClose(func() {
+		co.Log.Log(logger.Info, "KLV data channel closed")
+	})
+
+	co.klvDataChannel.OnError(func(err error) {
+		co.Log.Log(logger.Warn, "KLV data channel error: %v", err)
+	})
+
+	return nil
+}
+
+// SendKLVData sends KLV metadata through the data channel
+func (co *PeerConnection) SendKLVData(klvData []byte) error {
+	if co.klvDataChannel == nil {
+		return fmt.Errorf("KLV data channel not initialized")
+	}
+
+	// Wait for channel to be ready (with timeout)
+	select {
+	case <-co.klvChannelReady:
+		// Channel is ready
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("timeout waiting for KLV data channel to be ready")
+	case <-co.ctx.Done():
+		return fmt.Errorf("context cancelled")
+	}
+
+	// Check if channel is still open
+	if co.klvDataChannel.ReadyState() != webrtc.DataChannelStateOpen {
+		return fmt.Errorf("KLV data channel is not open (state: %s)", co.klvDataChannel.ReadyState())
+	}
+
+	// Send the KLV data
+	err := co.klvDataChannel.Send(klvData)
+	if err != nil {
+		return fmt.Errorf("failed to send KLV data: %w", err)
+	}
+
+	return nil
+}
+
+// KLVChannelReady returns a channel that closes when the KLV data channel is ready
+func (co *PeerConnection) KLVChannelReady() <-chan struct{} {
+	return co.klvChannelReady
 }
 
 // CreatePartialOffer creates a partial offer.
